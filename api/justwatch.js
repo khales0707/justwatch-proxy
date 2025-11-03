@@ -1,16 +1,14 @@
 // api/justwatch.js
-import fetch from "node-fetch";
+const fetch = require("node-fetch");
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   try {
-    const title = (req.query.title || "").trim();
-    const country = (req.query.country || "AR").toUpperCase();
-
+    const { title = "", country = "AR" } = req.query;
     if (!title) {
       return res.status(400).json({ error: "Falta parámetro 'title'" });
     }
 
-    // 1) Buscar el título en JustWatch
+    // Buscar en JustWatch
     const searchResp = await fetch("https://apis.justwatch.com/content/titles/es_AR/popular", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -21,54 +19,21 @@ export default async function handler(req, res) {
         content_types: ["movie", "show"]
       })
     });
-
     const searchData = await searchResp.json();
     const item = (searchData.items || [])[0];
     if (!item) {
       return res.json({ offers: [], country, title });
     }
 
-    // 2) Obtener ofertas/donde ver
+    // Detalles
     const detailsResp = await fetch(`https://apis.justwatch.com/content/titles/movie/${item.id}/locale/es_${country}`);
     const details = await detailsResp.json();
 
-    const offers = (details.offers || [])
-      .filter(o => o.country === country)
-      .map(o => ({
-        // Tipo: flatrate (streaming), rent (alquiler), buy (compra)
-        monetization_type: o.monetization_type,
-        provider_id: o.provider_id,
-        retail_price: o.retail_price || null,
-        currency: o.currency || null,
-        presentation_type: o.presentation_type || null
-      }));
+    const offers = (details.offers || []).filter(o => o.country === country);
 
-    // 3) Mapear providers (id -> nombre/logo) con catálogo público
-    const providersResp = await fetch(`https://apis.justwatch.com/content/providers/locale/es_${country}`);
-    const providersCatalog = await providersResp.json();
-    const providersIndex = {};
-    providersCatalog.forEach(p => {
-      providersIndex[p.id] = {
-        name: p.clear_name,
-        logo: p.icon_url // típico: https://images.justwatch.com/icon/{id}/{size}/{path}.png
-      };
-    });
-
-    const enriched = offers.map(o => ({
-      ...o,
-      provider_name: providersIndex[o.provider_id]?.name || `Provider ${o.provider_id}`,
-      provider_logo: providersIndex[o.provider_id]?.logo || null
-    }));
-
-    res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
-    return res.json({
-      country,
-      title,
-      item_id: item.id,
-      offers: enriched
-    });
+    res.json({ country, title, item_id: item.id, offers });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: "Error interno en JustWatch proxy" });
+    res.status(500).json({ error: "Error interno en JustWatch proxy" });
   }
-}
+};
